@@ -1,5 +1,10 @@
 # كاشف (Kashef) | درع الحماية من الاحتيال والنصب الإلكتروني
 
+[![Android CI](https://github.com/seotarek/kashef-scam-shield/actions/workflows/android.yml/badge.svg)](https://github.com/seotarek/kashef-scam-shield/actions/workflows/android.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.24-purple.svg)](https://kotlinlang.org)
+[![Android](https://img.shields.io/badge/Android-SDK%2024%2B-green.svg)](https://developer.android.com)
+
 تطبيق أندرويد مفتوح وسريع مبني بأحدث معايير **Jetpack Compose** و **Material 3**، مصمم خصيصاً لحماية المستخدمين في مصر والوطن العربي من محاولات النصب المتكررة (سرقة حسابات إنستاباي، اختراق المحافظ الإلكترونية، التصيد باسم البنوك، رسائل البريد المصري المزيفة، وفخاخ التوظيف الوهمي على تليجرام).
 
 ---

@@ -28,9 +28,8 @@ class MainViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    val scanHistory: StateFlow<List<ScanRecordEntity>> = historyDao?.getAllScans()
-        ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-        ?: MutableStateFlow(emptyList()).asStateFlow()
+    val scanHistory: StateFlow<List<ScanRecordEntity>> = (historyDao?.getAllScans() ?: flowOf(emptyList<ScanRecordEntity>()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList<ScanRecordEntity>())
 
     fun onInputChanged(newText: String) {
         _uiState.value = _uiState.value.copy(inputText = newText)

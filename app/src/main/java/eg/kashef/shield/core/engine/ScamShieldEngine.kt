@@ -1,9 +1,11 @@
 package eg.kashef.shield.core.engine
 
 import eg.kashef.shield.core.analyzer.TextMessageHeuristicAnalyzer
+import eg.kashef.shield.core.analyzer.UrlAnalysisResult
 import eg.kashef.shield.core.analyzer.UrlAnalyzer
 import eg.kashef.shield.domain.model.AnalysisResult
 import eg.kashef.shield.domain.model.DetectionSignal
+import eg.kashef.shield.domain.model.EvaluatedUrlInfo
 import eg.kashef.shield.domain.model.RiskLevel
 import eg.kashef.shield.domain.model.ThreatCategory
 
@@ -24,24 +26,75 @@ class ScamShieldEngine(
         val combinedSignals = mutableListOf<DetectionSignal>()
         combinedSignals.addAll(textResult.signals)
 
-        var highestUrlScore = 0
-        var primaryUrlResult = if (extractedUrls.isNotEmpty()) {
-            urlAnalyzer.analyze(extractedUrls.first(), surroundingText = trimmed)
-        } else null
+        val evaluatedUrls = mutableListOf<EvaluatedUrlInfo>()
+        var primaryUrlResult: UrlAnalysisResult? = null
+        var maxUrlScore = -1
 
-        // If multiple URLs, analyze all and pick the riskiest
         for (url in extractedUrls) {
             val res = urlAnalyzer.analyze(url, surroundingText = trimmed)
-            if (res.riskScore >= highestUrlScore) {
-                highestUrlScore = res.riskScore
+            evaluatedUrls.add(
+                EvaluatedUrlInfo(
+                    rawUrl = res.rawUrl,
+                    domain = res.canonicalDomain,
+                    isOfficial = res.isOfficial,
+                    officialName = res.officialEntity?.nameArabic,
+                    riskScore = res.riskScore
+                )
+            )
+
+            // Add URL-specific signals (excluding duplicates)
+            res.signals.forEach { sig ->
+                if (combinedSignals.none { it.title == sig.title }) {
+                    combinedSignals.add(sig)
+                }
+            }
+
+            // Pick the riskiest URL as primary; if tied, prefer the one with impersonation or first found
+            if (res.riskScore > maxUrlScore || (res.riskScore == maxUrlScore && primaryUrlResult?.isOfficial == true && !res.isOfficial)) {
+                maxUrlScore = res.riskScore
                 primaryUrlResult = res
             }
         }
 
-        primaryUrlResult?.signals?.let { combinedSignals.addAll(it) }
+        if (primaryUrlResult == null && extractedUrls.isNotEmpty()) {
+            primaryUrlResult = urlAnalyzer.analyze(extractedUrls.first(), surroundingText = trimmed)
+        }
 
-        // Whitelist check
-        if (primaryUrlResult != null && primaryUrlResult.isOfficial && textResult.riskScore < 20) {
+        // 1. Critical Camouflage Detection:
+        // An official domain used in a message that demands OTP or threatens account suspension!
+        if (primaryUrlResult != null && primaryUrlResult.isOfficial && textResult.isOtpOrCredentialThreat) {
+            val officialName = primaryUrlResult.officialEntity?.nameArabic ?: "جهة رسمية"
+            val camouflageSignal = DetectionSignal(
+                title = "تمويه احتيالي: استغلال اسم ورابط $officialName لطلب بيانات سرية",
+                description = "الرسالة تتضمن رابطاً للنطاق الرسمي لـ ($officialName)، ولكنها تطلب رمز OTP أو بيانات سرية! المؤسسات الرسمية لا تطلب رموز التحقق عبر الرسائل نهائياً.",
+                category = ThreatCategory.CAMOUFLAGE_PHISHING,
+                severityPoints = 60
+            )
+            combinedSignals.add(0, camouflageSignal)
+
+            return AnalysisResult(
+                riskLevel = RiskLevel.DANGEROUS,
+                score = 85,
+                extractedUrl = primaryUrlResult.rawUrl,
+                extractedDomain = primaryUrlResult.canonicalDomain,
+                isOfficialDomain = true,
+                officialEntityName = primaryUrlResult.officialEntity?.nameArabic,
+                headline = "تحذير أمني: تمويه برابط رسمي لطلب رمز سري (OTP)!",
+                detailedSummary = "الرسالة تستخدم رابطاً رسمياً لـ ($officialName) كغطاء للتمويه، بينما يطلب النص مشاركة رموز سرية أو أكواد تحقق. لا تشارك أي رمز يظهر لك مع أي شخص تحت أي ظرف.",
+                signals = combinedSignals,
+                actionAdvice = listOf(
+                    "لا تشارك رمز التأكيد (OTP) نهائياً مع أي شخص.",
+                    "الموظفون الحقيقيون في البنك لن يطلبوا منك الرمز السري أبداً.",
+                    "احظر رقم المرسل وتواصل مع خدمة العملاء بالرقم المطبوع على بطاقتك."
+                ),
+                shareableWarningText = buildShareableWarning(RiskLevel.DANGEROUS, primaryUrlResult, trimmed),
+                allExtractedUrls = evaluatedUrls
+            )
+        }
+
+        // 2. Official Domain without threats (True Safe)
+        if (primaryUrlResult != null && primaryUrlResult.isOfficial && textResult.signals.isEmpty() && (primaryUrlResult.riskScore == 0)) {
+            val entityName = primaryUrlResult.officialEntity?.nameArabic ?: "جهة معتمدة"
             return AnalysisResult(
                 riskLevel = RiskLevel.SAFE,
                 score = 0,
@@ -49,23 +102,33 @@ class ScamShieldEngine(
                 extractedDomain = primaryUrlResult.canonicalDomain,
                 isOfficialDomain = true,
                 officialEntityName = primaryUrlResult.officialEntity?.nameArabic,
-                headline = "رابط رسمي موثوق (${primaryUrlResult.officialEntity?.nameArabic})",
-                detailedSummary = "هذا الرابط يتبع رسمياً النطاق المعتمد لـ (${primaryUrlResult.officialEntity?.nameArabic})، ولم يتم رصد أي محاولات تلاعب أو انتحال.",
+                headline = "نطاق رسمي مطابق ($entityName)",
+                detailedSummary = "هذا الرابط يتبع رسمياً النطاق المعتمد لـ ($entityName)، ولم يتم رصد أي طلبات سرية أو مؤشرات تلاعب في المحتوى المفحوص.",
                 signals = combinedSignals,
                 actionAdvice = listOf(
                     "الموقع معتمد ورسمي، يمكنك الدخول بأمان.",
                     "تأكد دائماً من وجود علامة القفل (HTTPS) في شريط المتصفح."
                 ),
-                shareableWarningText = ""
+                shareableWarningText = "",
+                allExtractedUrls = evaluatedUrls
             )
         }
+
+        // 3. Multi-URL Mixed Threat Detection:
+        // If message has multiple URLs and ANY is dangerous, overall verdict is dangerous!
+        val hasAnyHighRiskUrl = evaluatedUrls.any { it.riskScore >= 40 }
+        val hasAnyMediumRiskUrl = evaluatedUrls.any { it.riskScore in 20..39 }
 
         val rawCombinedScore = textResult.riskScore + (primaryUrlResult?.riskScore ?: 0)
         val finalScore = rawCombinedScore.coerceIn(0, 100)
 
         val riskLevel = when {
-            finalScore >= 50 || combinedSignals.any { it.category == ThreatCategory.BRAND_IMPERSONATION || it.category == ThreatCategory.OTP_CREDENTIAL_THEFT } -> RiskLevel.DANGEROUS
-            finalScore >= 25 -> RiskLevel.SUSPICIOUS
+            hasAnyHighRiskUrl || finalScore >= 50 || combinedSignals.any { 
+                it.category == ThreatCategory.BRAND_IMPERSONATION || 
+                it.category == ThreatCategory.OTP_CREDENTIAL_THEFT ||
+                it.category == ThreatCategory.CAMOUFLAGE_PHISHING
+            } -> RiskLevel.DANGEROUS
+            hasAnyMediumRiskUrl || finalScore >= 25 -> RiskLevel.SUSPICIOUS
             else -> RiskLevel.SAFE
         }
 
@@ -75,7 +138,7 @@ class ScamShieldEngine(
                 if (brand != null) "احتيال خطير: انتحال صفة $brand!" else "تحذير: مؤشرات احتيال ونصب عالية جداً!"
             }
             RiskLevel.SUSPICIOUS -> "تنبيه: محتوى مشبوه يتطلب الحذر الشديد"
-            RiskLevel.SAFE -> "لم يتم رصد مؤشرات احتيال واضحة"
+            RiskLevel.SAFE -> "طبيعي: لم تُرصد مؤشرات احتيال شائعة"
         }
 
         val detailedSummary = buildDetailedSummary(riskLevel, primaryUrlResult, textResult.matchedKeywords)
@@ -84,22 +147,23 @@ class ScamShieldEngine(
 
         return AnalysisResult(
             riskLevel = riskLevel,
-            score = finalScore,
+            score = if (riskLevel == RiskLevel.DANGEROUS && finalScore < 50) 65 else finalScore,
             extractedUrl = primaryUrlResult?.rawUrl,
             extractedDomain = primaryUrlResult?.canonicalDomain,
-            isOfficialDomain = false,
-            officialEntityName = null,
+            isOfficialDomain = primaryUrlResult?.isOfficial == true,
+            officialEntityName = primaryUrlResult?.officialEntity?.nameArabic,
             headline = headline,
             detailedSummary = detailedSummary,
             signals = combinedSignals,
             actionAdvice = actionAdvice,
-            shareableWarningText = shareableWarning
+            shareableWarningText = shareableWarning,
+            allExtractedUrls = evaluatedUrls
         )
     }
 
     private fun buildDetailedSummary(
         level: RiskLevel,
-        urlRes: eg.kashef.shield.core.analyzer.UrlAnalysisResult?,
+        urlRes: UrlAnalysisResult?,
         matchedKeywords: List<String>
     ): String {
         return when (level) {
@@ -113,11 +177,11 @@ class ScamShieldEngine(
                 }
             }
             RiskLevel.SUSPICIOUS -> "هناك عبارات ضغط واستعجال ونطاقات غير شائعة في الرسالة. ننصح بعدم إدخال أي بيانات شخصية والتأكد من الجهة المصدرية عبر قنواتها الرسمية."
-            RiskLevel.SAFE -> "النص والرابط لا يحتويان على علامات التصيد الشائعة، ومع ذلك احرص دائماً على عدم مشاركة أي رمز OTP مع أي شخص."
+            RiskLevel.SAFE -> "المحتوى المفحوص لا يحتوي على علامات التصيد الشائعة، ومع ذلك احرص دائماً على عدم مشاركة أي رمز OTP مع أي شخص."
         }
     }
 
-    private fun buildActionAdvice(level: RiskLevel, urlRes: eg.kashef.shield.core.analyzer.UrlAnalysisResult?): List<String> {
+    private fun buildActionAdvice(level: RiskLevel, urlRes: UrlAnalysisResult?): List<String> {
         return when (level) {
             RiskLevel.DANGEROUS -> listOf(
                 "لا تضغط على الرابط ولا تفتحه في المتصفح.",
@@ -137,7 +201,7 @@ class ScamShieldEngine(
 
     private fun buildShareableWarning(
         level: RiskLevel,
-        urlRes: eg.kashef.shield.core.analyzer.UrlAnalysisResult?,
+        urlRes: UrlAnalysisResult?,
         originalText: String
     ): String {
         if (level == RiskLevel.SAFE) return ""
@@ -167,7 +231,8 @@ class ScamShieldEngine(
             detailedSummary = "انسخ أي رسالة أو رابط مشبوه أو شاركه مع التطبيق للبدء فوراً.",
             signals = emptyList(),
             actionAdvice = emptyList(),
-            shareableWarningText = ""
+            shareableWarningText = "",
+            allExtractedUrls = emptyList()
         )
     }
 }

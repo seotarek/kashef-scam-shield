@@ -1,5 +1,6 @@
 package eg.kashef.shield.core.analyzer
 
+import eg.kashef.shield.core.util.ArabicTextNormalizer
 import eg.kashef.shield.core.whitelist.EgyptianEntitiesWhitelist
 import eg.kashef.shield.core.whitelist.OfficialEntity
 import eg.kashef.shield.domain.model.DetectionSignal
@@ -38,6 +39,10 @@ class UrlAnalyzer {
         private val URL_REGEX = Pattern.compile(
             "(?i)\\b(?:https?://|www\\d{0,3}[.]|[a-z0-9.\\-]+[.][a-z]{2,4}/)(?:[^\\s()<>]+|\\((?:[^\\s()<>]+|(?:\\([^\\s()<>]+\\)))*\\))+(?:\\((?:[^\\s()<>]+|(?:\\([^\\s()<>]+\\)))*\\)|[^\\s`!()\\[\\]{};:'\".,<>?«»“”‘’])"
         )
+
+        private val REDIRECT_PARAM_PATTERN = Pattern.compile(
+            "(?i)[?&](?:url|redirect|redirect_to|next|target|dest|to)=https?%3A%2F%2F|(?i)[?&](?:url|redirect|redirect_to|next|target|dest|to)=https?://"
+        )
     }
 
     fun extractUrls(text: String): List<String> {
@@ -60,12 +65,25 @@ class UrlAnalyzer {
         val canonicalDomain = extractCanonicalDomain(rawUrl)
         val officialEntity = EgyptianEntitiesWhitelist.findOfficialEntityByDomain(canonicalDomain)
 
+        // 1. Check for open redirect tricks even on official or popular domains
+        if (REDIRECT_PARAM_PATTERN.matcher(rawUrl).find()) {
+            signals.add(
+                DetectionSignal(
+                    title = "إعادة توجيه مشبوهة (Open Redirect)",
+                    description = "الرابط يحتوي على بارامتر إعادة توجيه قد يُستغل لتحويلك لصفحة خارجية خبيثة بعد فتح النطاق الظاهر.",
+                    category = ThreatCategory.SUSPICIOUS_SHORTENER,
+                    severityPoints = 35
+                )
+            )
+            score += 35
+        }
+
         if (officialEntity != null) {
-            // Whitelisted official Egyptian institution!
+            // Whitelisted official Egyptian institution
             signals.add(
                 DetectionSignal(
                     title = "نطاق رسمي موثق ومطابق",
-                    description = "هذا الرابط يتبع رسمياً لـ: ${officialEntity.nameArabic}",
+                    description = "هذا النطاق يتبع رسمياً لـ: ${officialEntity.nameArabic}",
                     category = ThreatCategory.OFFICIAL_VERIFIED,
                     severityPoints = 0
                 )
@@ -77,11 +95,11 @@ class UrlAnalyzer {
                 officialEntity = officialEntity,
                 impersonatedEntity = null,
                 signals = signals,
-                riskScore = 0
+                riskScore = score
             )
         }
 
-        // 1. Direct IP Address Check
+        // 2. Direct IP Address Check
         if (IPV4_PATTERN.matcher(canonicalDomain).matches()) {
             signals.add(
                 DetectionSignal(
@@ -94,7 +112,7 @@ class UrlAnalyzer {
             score += 40
         }
 
-        // 2. High-Risk TLD Check
+        // 3. High-Risk TLD Check
         val tld = canonicalDomain.substringAfterLast('.', "")
         if (HIGH_RISK_TLDS.contains(tld)) {
             signals.add(
@@ -108,10 +126,11 @@ class UrlAnalyzer {
             score += 30
         }
 
-        // 3. Brand Impersonation / Typosquatting in Domain or Full URL
-        val impersonated = EgyptianEntitiesWhitelist.findBrandImpersonated(canonicalDomain) 
+        // 4. Brand Impersonation / Typosquatting in Domain or Full URL
+        val normalizedSurrounding = ArabicTextNormalizer.normalize(surroundingText)
+        val impersonated = EgyptianEntitiesWhitelist.findBrandImpersonated(canonicalDomain)
             ?: EgyptianEntitiesWhitelist.findBrandImpersonated(rawUrl)
-            ?: EgyptianEntitiesWhitelist.findBrandImpersonated(surroundingText)
+            ?: EgyptianEntitiesWhitelist.findBrandImpersonated(normalizedSurrounding)
 
         if (impersonated != null) {
             val isBrandInDomain = EgyptianEntitiesWhitelist.findBrandImpersonated(canonicalDomain) != null
@@ -126,7 +145,7 @@ class UrlAnalyzer {
                 )
                 score += 50
             } else if (surroundingText.isNotBlank()) {
-                // The message talks about the bank/wallet, but the link is to completely unrelated external domain!
+                // The message talks about the bank/wallet, but the link is to a completely unrelated external domain!
                 signals.add(
                     DetectionSignal(
                         title = "رابط مريب غير متطابق مع نص الرسالة",
@@ -139,7 +158,7 @@ class UrlAnalyzer {
             }
         }
 
-        // 4. URL Shortener Masking
+        // 5. URL Shortener Masking
         if (SHORTENER_DOMAINS.contains(canonicalDomain)) {
             signals.add(
                 DetectionSignal(
@@ -152,7 +171,7 @@ class UrlAnalyzer {
             score += 25
         }
 
-        // 5. Deceptive Subdomain Trick (e.g. nbe.com.eg.login-account.site)
+        // 6. Deceptive Subdomain Trick (e.g. nbe.com.eg.login-account.site)
         val parts = canonicalDomain.split(".")
         if (parts.size >= 3) {
             val suspiciousSub = parts.subList(0, parts.size - 2).joinToString(".")

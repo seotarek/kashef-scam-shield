@@ -1,13 +1,14 @@
 package eg.kashef.shield.domain.model
 
 enum class RiskLevel(val arabicTitle: String, val colorHex: String) {
-    SAFE("آمن وموثوق", "#10B981"),
+    SAFE("طبيعي - لم تُرصد تهديدات", "#10B981"),
     SUSPICIOUS("مشبوه - توخّ الحذر", "#F59E0B"),
-    DANGEROUS("خطر - احتيال مؤكد", "#EF4444")
+    DANGEROUS("خطر - مؤشرات احتيال عالية", "#EF4444")
 }
 
 enum class ThreatCategory(val arabicLabel: String) {
     OFFICIAL_VERIFIED("مؤسسة رسمية معتمدة"),
+    CAMOUFLAGE_PHISHING("تمويه: استغلال اسم جهة رسمية لطلب بيانات حساسة"),
     BRAND_IMPERSONATION("انتحال صفة بنك أو خدمة رسمية"),
     TYPOSQUATTING_DOMAIN("تلاعب في حروف اسم الموقع"),
     HIGH_RISK_TLD("نطاق إنترنت رخيص ومشبوه"),
@@ -28,6 +29,14 @@ data class DetectionSignal(
     val severityPoints: Int
 )
 
+data class EvaluatedUrlInfo(
+    val rawUrl: String,
+    val domain: String,
+    val isOfficial: Boolean,
+    val officialName: String?,
+    val riskScore: Int
+)
+
 data class AnalysisResult(
     val riskLevel: RiskLevel,
     val score: Int, // 0 to 100
@@ -39,5 +48,6 @@ data class AnalysisResult(
     val detailedSummary: String,
     val signals: List<DetectionSignal>,
     val actionAdvice: List<String>,
-    val shareableWarningText: String
+    val shareableWarningText: String,
+    val allExtractedUrls: List<EvaluatedUrlInfo> = emptyList()
 )

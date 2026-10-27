@@ -9,8 +9,9 @@ object ArabicTextNormalizer {
     private val ZERO_WIDTH_PATTERN = Pattern.compile("[\u200B\u200C\u200D\uFEFF\u00AD]")
     private val MULTI_SPACE_PATTERN = Pattern.compile("\\s+")
     
-    // Pattern to detect single Arabic letters separated by whitespace (e.g. "إ ي ق ا ف" -> "ايقاف")
-    private val SPACED_LETTERS_PATTERN = Pattern.compile("(?<=\\b[\\u0600-\\u06FF])\\s+(?=[\\u0600-\\u06FF]\\b)")
+    // Pattern to detect single Arabic letters separated by single space (e.g. "إ ي ق ا ف" -> "ايقاف")
+    // Uses (?U) to enable Unicode character class support so \b correctly detects Arabic word boundaries
+    private val SPACED_LETTERS_PATTERN = Pattern.compile("(?U)(?<=\\b[\\u0600-\\u06FF]) (?=[\\u0600-\\u06FF]\\b)")
 
     /**
      * Deep normalizer for text heuristics analysis.

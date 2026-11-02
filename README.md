@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/seotarek/kashef-scam-shield/releases">
+    <img src="https://img.shields.io/badge/Download_APK-GitHub_Releases-22c55e?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" />
+  </a>
+</p>
+
+<p align="center">
   <strong>On-Device Zero-Knowledge Fraud &amp; Phishing Heuristic Engine for Android</strong><br />
   تطبيق أندرويد مفتوح المصدر لحماية المستخدمين في مصر والوطن العربي من الاحتيال المالي وسرقة الحسابات، يعمل بالكامل محلياً على جهازك دون إرسال أي بيانات لخوادم خارجية (Zero Telemetry).
 </p>

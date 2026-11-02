@@ -1,17 +1,24 @@
-name: Android CI
+name: Android CI & APK Build
 
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - "v*"
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -26,3 +33,34 @@ jobs:
 
     - name: Run Unit Tests
       run: gradle testDebugUnitTest --stacktrace
+
+    - name: Build Android APK
+      run: gradle assembleDebug --stacktrace
+
+    - name: Rename APK
+      run: |
+        mkdir -p build-artifacts
+        cp app/build/outputs/apk/debug/app-debug.apk build-artifacts/kashef-scam-shield-v1.0.0.apk
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: kashef-scam-shield-v1.0.0
+        path: build-artifacts/kashef-scam-shield-v1.0.0.apk
+        retention-days: 30
+
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: build-artifacts/kashef-scam-shield-v1.0.0.apk
+        name: Kashef Android v${{ github.ref_name }}
+        tag_name: ${{ github.ref }}
+        generate_release_notes: true
+        body: |
+          ## 🛡️ كاشف (Kashef) — Android Release
+          - **100% On-Device Zero Knowledge**: يعمل بالكامل محلياً بدون إذن إنترنت نهائياً.
+          - **Zero Telemetry**: لا يتم إرسال أي بيانات لخوادم خارجية.
+          - **Download**: حمل ملف `kashef-scam-shield-v1.0.0.apk` أدناه وثبته مباشرة على هاتفك.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
